@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Endless Run — p5.js</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+    }
+    canvas { display: block; border-radius: 8px; }
+  </style>
+</head>
+<body>
+<script>
+const W = 680, H = 280;
+const GROUND_Y = H - 55;
+
+// ── colours ────────────────────────────────────────────────────────────────
+const C = {
+  bg:           '#0a0a0f',
+  ground:       '#1e1a2e',
+  groundLine:   '#2d2845',
+  groundTile:   '#2a2545',
+  player:       '#b49dff',
+  playerGlow:   '#7b5ea7',
+  visorBg:      '#0a0a0f',
+  visorFg:      '#66eeff',
+  trail:        '#7b5ea7',
+  obstacle:     '#ff6b6b',
+  obstacleGlow: '#cc3333',
+  obstacleHi:   '#ff9999',
+  star:         '#c8c0ff',
+  particles:    ['#b49dff','#ff6b6b','#ffcc66','#66ffcc'],
+};
+
+// ── state ──────────────────────────────────────────────────────────────────
+let state, best = 0;
+
+function initState() {
+  return {
+    running: false,
+    dead:    false,
+    score:   0,
+    speed:   4.5,
+    frame:   0,
+    player: {
+      x: 90, y: GROUND_Y, vy: 0,
+      jumps: 0, maxJumps: 2,
+      w: 28, h: 36,
+      trail: [],
+    },
+    obstacles: [],
+    particles: [],
+    stars: Array.from({ length: 60 }, () => ({
+      x:       random(W),
+      y:       random(GROUND_Y - 20),
+      r:       random(0.3, 1.5),
+      twinkle: random(TWO_PI),
+    })),
+    nextObs:    90,
+    groundTiles: Array.from({ length: 14 }, (_, i) => i * 52),
+  };
+}
+
+// ── p5 setup ───────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(W, H);
+  state = initState();
+  noSmooth();           // crisp pixel look
+}
+
+// ── input ──────────────────────────────────────────────────────────────────
+function keyPressed() {
+  if (key === ' ' || keyCode === UP_ARROW) { doJump(); return false; }
+}
+function mousePressed() { doJump(); }
+function touchStarted()  { doJump(); return false; }
+
+function doJump() {
+  if (state.dead)    { state = initState(); return; }
+  if (!state.running) state.running = true;
+  const p = state.player;
+  if (p.jumps < p.maxJumps) {
+    p.vy = -13.5;
+    p.jumps++;
+    spawnParticles(p.x + p.w / 2, p.y + p.h, 6, C.player, 0, 1);
+  }
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function spawnParticles(x, y, count, col, vxBase, vyBase) {
+  for (let i = 0; i < count; i++) {
+    const cols = Array.isArray(col) ? col : [col];
+    state.particles.push({
+      x, y,
+      vx:    random(-2.5, 2.5) + vxBase,
+      vy:    random(-2, 2) + vyBase - 2,
+      life:  1,
+      decay: random(0.04, 0.08),
+      r:     random(1.5, 4.5),
+      col:   cols[floor(random(cols.length))],
+    });
+  }
+}
+
+function spawnObstacle() {
+  const types = [
+    { w: 18, h: 40 },
+    { w: 30, h: 26 },
+    { w: 16, h: 58 },
+    { w: 40, h: 20 },
+  ];
+  const t = random(types);
+  state.obstacles.push({
+    x: W + 20, w: t.w, h: t.h,
+    y: GROUND_Y + state.player.h - t.h,
+  });
+}
+
+// ── update ─────────────────────────────────────────────────────────────────
+function gameUpdate() {
+  if (!state.running || state.dead) return;
+
+  state.frame++;
+  state.score++;
+  state.speed = 4.5 + floor(state.score / 300) * 0.4;
+
+  const p = state.player;
+
+  // trail
+  p.trail.push({ x: p.x, y: p.y, life: 1 });
+  if (p.trail.length > 8) p.trail.shift();
+  for (const t of p.trail) t.life -= 0.15;
+
+  // physics
+  p.vy += 0.7;
+  p.y  += p.vy;
+  if (p.y >= GROUND_Y) { p.y = GROUND_Y; p.vy = 0; p.jumps = 0; }
+
+  // ground tiles
+  state.groundTiles = state.groundTiles.map(x => {
+    x -= state.speed;
+    if (x < -52) x += 52 * 14;
+    return x;
+  });
+
+  // obstacles
+  state.nextObs--;
+  if (state.nextObs <= 0) {
+    spawnObstacle();
+    state.nextObs = floor(70 + random(80) - min(state.score / 300, 30));
+  }
+  for (const o of state.obstacles) o.x -= state.speed;
+  state.obstacles = state.obstacles.filter(o => o.x > -60);
+
+  // collision
+  for (const o of state.obstacles) {
+    if (
+      p.x + p.w - 6 > o.x + 4 && p.x + 6 < o.x + o.w - 4 &&
+      p.y + p.h - 4 > o.y + 4 && p.y + 4 < o.y + o.h
+    ) {
+      state.dead = true;
+      spawnParticles(p.x + p.w / 2, p.y + p.h / 2, 20, C.particles, 0, -1);
+      if (state.score > best) best = state.score;
+    }
+  }
+
+  // particles
+  for (const pt of state.particles) {
+    pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.15; pt.life -= pt.decay;
+  }
+  state.particles = state.particles.filter(pt => pt.life > 0);
+}
+
+// ── draw ───────────────────────────────────────────────────────────────────
+function draw() {
+  gameUpdate();
+
+  // background
+  background(C.bg);
+
+  // stars
+  noStroke();
+  for (const s of state.stars) {
+    s.twinkle += 0.03;
+    const a = 0.3 + sin(s.twinkle) * 0.3;
+    fill(C.star);
+    drawingContext.globalAlpha = a;
+    ellipse(s.x, s.y, s.r * 2);
+  }
+  drawingContext.globalAlpha = 1;
+
+  // ground block
+  noStroke();
+  fill(C.ground);
+  rect(0, GROUND_Y + 36, W, H - (GROUND_Y + 36));
+
+  fill(C.groundLine);
+  rect(0, GROUND_Y + 36, W, 3);
+
+  fill(C.groundTile);
+  for (const tx of state.groundTiles) rect(tx, GROUND_Y + 39, 48, 4);
+
+  // player trail
+  const p = state.player;
+  for (const t of p.trail) {
+    if (t.life <= 0) continue;
+    drawingContext.globalAlpha = t.life * 0.35;
+    fill(C.trail);
+    const s = t.life;
+    rect(t.x + p.w * (1 - s) / 2, t.y + p.h * (1 - s) / 2, p.w * s, p.h * s);
+  }
+  drawingContext.globalAlpha = 1;
+
+  // player
+  if (!state.dead) {
+    const bobY = p.y >= GROUND_Y ? sin(state.frame * 0.25) * 1.5 : 0;
+    drawingContext.shadowColor = C.playerGlow;
+    drawingContext.shadowBlur  = 18;
+    noStroke();
+    fill(C.player);
+    rect(p.x, p.y + bobY, p.w, p.h);
+
+    drawingContext.shadowBlur = 0;
+    fill(C.visorBg);
+    rect(p.x + 6, p.y + bobY + 6, p.w - 10, 10);
+
+    fill(C.visorFg);
+    drawingContext.globalAlpha = 0.7;
+    rect(p.x + 7, p.y + bobY + 7, p.w - 12, 7);
+    drawingContext.globalAlpha = 1;
+  }
+
+  // obstacles
+  for (const o of state.obstacles) {
+    drawingContext.shadowColor = C.obstacleGlow;
+    drawingContext.shadowBlur  = 14;
+    noStroke();
+    fill(C.obstacle);
+    rect(o.x, o.y, o.w, o.h);
+    drawingContext.shadowBlur = 0;
+    fill(C.obstacleHi);
+    rect(o.x + 3, o.y + 3, o.w - 6, 5);
+  }
+  drawingContext.shadowBlur = 0;
+
+  // particles
+  noStroke();
+  for (const pt of state.particles) {
+    drawingContext.globalAlpha = pt.life;
+    fill(pt.col);
+    ellipse(pt.x, pt.y, pt.r * 2);
+  }
+  drawingContext.globalAlpha = 1;
+
+  // HUD
+  drawHUD();
+
+  // overlays
+  if (!state.running) drawStartScreen();
+  if (state.dead)     drawGameOver();
+}
+
+function drawHUD() {
+  noStroke();
+  textFont('Courier New');
+  textSize(14);
+  textAlign(LEFT, TOP);
+  fill(C.player);
+  text('SCORE: ' + state.score, 8, 8);
+
+  textAlign(RIGHT, TOP);
+  fill('#6c5a99');
+  text('BEST: ' + best, W - 8, 8);
+
+  textAlign(CENTER, TOP);
+  fill('#4a4060');
+  textSize(10);
+  text('SPACE / TAP TO JUMP  ·  DOUBLE JUMP ALLOWED', W / 2, 10);
+}
+
+function drawStartScreen() {
+  fill(10, 10, 15, 178);
+  noStroke();
+  rect(0, 0, W, H);
+
+  drawingContext.shadowColor = '#7b5ea7';
+  drawingContext.shadowBlur  = 20;
+  fill(C.player);
+  textFont('Courier New');
+  textSize(32);
+  textAlign(CENTER, CENTER);
+  text('ENDLESS RUN', W / 2, H / 2 - 20);
+
+  drawingContext.shadowBlur = 0;
+  fill('#7b5ea7');
+  textSize(14);
+  text('press SPACE or tap to begin', W / 2, H / 2 + 18);
+}
+
+function drawGameOver() {
+  fill(10, 10, 15, 191);
+  noStroke();
+  rect(0, 0, W, H);
+
+  drawingContext.shadowColor = '#cc3333';
+  drawingContext.shadowBlur  = 20;
+  fill(C.obstacle);
+  textFont('Courier New');
+  textSize(30);
+  textAlign(CENTER, CENTER);
+  text('GAME OVER', W / 2, H / 2 - 24);
+
+  drawingContext.shadowBlur = 0;
+  fill(C.player);
+  textSize(15);
+  text('score: ' + state.score, W / 2, H / 2 + 10);
+
+  fill('#7b5ea7');
+  textSize(13);
+  text('press SPACE or tap to restart', W / 2, H / 2 + 36);
+}
+</script>
+</body>
+</html>
